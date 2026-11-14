@@ -4,6 +4,8 @@ import { createProject, makeComponent } from '../engine/project'
 import { simulateProject, updateSequentialState } from '../engine/simulate'
 import { isValidProject, loadProjects, saveProject } from '../storage/local'
 import type { Component, GateKind, LogicValue, Project, Wire } from '../engine/types'
+import { beginGithubLogin, connectRepository, getGithubProjects, getGithubState, getPrivateRepositories, logoutGithub, saveGithubProject } from '../api/github'
+import type { ConnectedRepository, GithubState } from '../api/github'
 
 const groups: { title: string; kinds: GateKind[] }[] = [
   { title: 'PINS', kinds: ['INPUT', 'OUTPUT'] },
@@ -34,12 +36,33 @@ export default function App() {
   const [showLibrary, setShowLibrary] = useState(true)
   const [showInspector, setShowInspector] = useState(true)
   const [circuitStack, setCircuitStack] = useState<string[]>([])
+  const [githubState, setGithubState] = useState<GithubState>({ configured: false, user: null, appInstallUrl: null })
+  const [githubDialog, setGithubDialog] = useState<'repositories' | 'projects' | null>(null)
+  const [githubRepositories, setGithubRepositories] = useState<ConnectedRepository[]>([])
+  const [githubProjects, setGithubProjects] = useState<Project[]>([])
+  const [githubError, setGithubError] = useState('')
+  const [githubBusy, setGithubBusy] = useState(false)
   const svgRef = useRef<SVGSVGElement>(null)
   const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null)
   const panRef = useRef<{ x: number; y: number; view: View } | null>(null)
   const circuit = project.circuits.find(c => c.id === project.activeCircuitId)!
   const simulation = useMemo(() => simulateProject(project), [project])
   const selectedComponent = circuit.components.find(c => c.id === selected)
+
+  useEffect(() => {
+    let active = true
+    getGithubState().then(result => {
+      if (!active) return
+      setGithubState(result)
+      const resultParam = new URLSearchParams(window.location.search).get('github')
+      if (resultParam === 'connected') setStatus(`Signed in as @${result.user?.login ?? 'GitHub user'}`)
+      if (resultParam === 'cancelled') setStatus('GitHub sign-in was cancelled')
+      if (resultParam) window.history.replaceState({}, '', window.location.pathname)
+    }).catch(() => {
+      if (active) setGithubState({ configured: false, user: null, appInstallUrl: null })
+    })
+    return () => { active = false }
+  }, [])
 
   // Local autosave is deliberately independent of GitHub sign-in and cloud availability.
   useEffect(() => {
@@ -116,7 +139,92 @@ export default function App() {
     setProject(p=>({...p,activeCircuitId:parent}))
     setSelected(null); setWireStart(null)
   }
-  function save() { saveProject(project); setStatus('Saved on this device') }
+  function save() {
+    saveProject(project)
+    const repository = githubState.user?.repository
+    if (!repository) { setStatus('Saved on this device'); return }
+    setGithubBusy(true)
+    setGithubError('')
+    setStatus(`Saving to ${repository.name} on GitHub…`)
+    saveGithubProject(project)
+      .then(() => setStatus(`Saved locally and to ${repository.fullName}`))
+      .catch(error => {
+        setGithubError(error instanceof Error ? error.message : 'GitHub save failed.')
+        setStatus('Saved locally; GitHub save failed')
+      })
+      .finally(() => setGithubBusy(false))
+  }
+
+  async function openRepositoryPicker() {
+    if (!githubState.user) {
+      if (githubState.configured) beginGithubLogin()
+      else setGithubError('GitHub sign-in is not configured on the server yet.')
+      return
+    }
+    setGithubDialog('repositories')
+    setGithubBusy(true)
+    setGithubError('')
+    try {
+      const result = await getPrivateRepositories()
+      setGithubRepositories(result.repositories)
+    } catch (error) {
+      setGithubError(error instanceof Error ? error.message : 'Could not load your private repositories.')
+    } finally {
+      setGithubBusy(false)
+    }
+  }
+
+  async function chooseRepository(repository: ConnectedRepository) {
+    setGithubBusy(true)
+    setGithubError('')
+    try {
+      const result = await connectRepository(repository.id)
+      setGithubState(current => ({ ...current, user: current.user ? { ...current.user, repository: result.repository } : null }))
+      setGithubDialog(null)
+      setStatus(`GitHub storage connected: ${result.repository.fullName}`)
+    } catch (error) {
+      setGithubError(error instanceof Error ? error.message : 'Could not connect this repository.')
+    } finally {
+      setGithubBusy(false)
+    }
+  }
+
+  async function openGithubProjects() {
+    setGithubDialog('projects')
+    setGithubBusy(true)
+    setGithubError('')
+    try {
+      const result = await getGithubProjects()
+      setGithubProjects(result.projects.filter(isValidProject))
+    } catch (error) {
+      setGithubError(error instanceof Error ? error.message : 'Could not load projects from GitHub.')
+    } finally {
+      setGithubBusy(false)
+    }
+  }
+
+  function loadGithubProject(remoteProject: Project) {
+    setProject(remoteProject)
+    saveProject(remoteProject)
+    setSelected(null)
+    setCircuitStack([])
+    setGithubDialog(null)
+    setStatus(`Loaded from ${githubState.user?.repository?.fullName ?? 'GitHub'}`)
+  }
+
+  async function signOutGithub() {
+    setGithubBusy(true)
+    try {
+      await logoutGithub()
+      setGithubState(current => ({ ...current, user: null }))
+      setGithubDialog(null)
+      setStatus('Signed out of GitHub; local projects are still available')
+    } catch (error) {
+      setGithubError(error instanceof Error ? error.message : 'Could not sign out.')
+    } finally {
+      setGithubBusy(false)
+    }
+  }
   function exportProject() {
     const blob = new Blob([JSON.stringify(project,null,2)], { type:'application/json' })
     const url = URL.createObjectURL(blob); const a = document.createElement('a')
@@ -248,7 +356,7 @@ export default function App() {
     <header className="titlebar">
       <div className="traffic"><i/><i/><i/></div>
       <div className="brand"><span className="brand-mark"><CircuitBoard size={17}/></span><b>LogicLab</b><span className="muted">/ Digital Laboratory</span></div>
-      <div className="title-actions"><span className="save-status"><span className="status-dot"/>{status}</span><button className="icon-btn" onClick={()=>setDark(!dark)} title="Toggle theme">{dark?<Sun size={16}/>:<Moon size={16}/>}</button><button className="primary-btn" onClick={save}><Save size={15}/> Save</button></div>
+      <div className="title-actions"><span className="save-status"><span className="status-dot"/>{status}</span>{githubState.user?<button className="account-btn" onClick={openRepositoryPicker} title="Manage GitHub storage"><img src={githubState.user.avatarUrl} alt=""/><span>@{githubState.user.login}</span></button>:<button className="secondary-btn" disabled={!githubState.configured} onClick={beginGithubLogin} title={githubState.configured?'Sign in with GitHub':'GitHub sign-in is not configured on the server yet'}><Github size={15}/> Sign in with GitHub</button>}<button className="icon-btn" onClick={()=>setDark(!dark)} title="Toggle theme">{dark?<Sun size={16}/>:<Moon size={16}/>}</button><button className="primary-btn" onClick={save} disabled={githubBusy}><Save size={15}/> Save</button></div>
     </header>
     <div className="workspace">
       <aside className="sidebar">
@@ -259,7 +367,13 @@ export default function App() {
         <div className="side-label section-label">LEARN</div>
         <button className="nav" onClick={()=>setShowTruth(v=>!v)}><Activity size={16}/> Truth table</button>
         <button className="nav"><BookOpen size={16}/> Documentation</button>
-        <div className="sidebar-bottom"><div className="github-card"><Github size={17}/><div><b>Local workspace</b><small>GitHub sync planned</small></div><span className="online-dot"/></div><button className="nav"><Settings2 size={16}/> Preferences</button></div>
+        <div className="sidebar-bottom">
+          <div className="github-card"><Github size={17}/><div><b>{githubState.user ? `@${githubState.user.login}` : 'GitHub storage'}</b><small>{githubState.user?.repository?.fullName ?? (githubState.user ? 'Connect a private repo' : githubState.configured ? 'Sign in to sync projects' : 'Server setup required')}</small></div><span className="online-dot"/></div>
+          {githubState.user && !githubState.user.repository && <button className="nav" onClick={openRepositoryPicker}><Github size={16}/> Connect private repo</button>}
+          {githubState.user?.repository && <><button className="nav" onClick={openGithubProjects}><FolderOpen size={16}/> Open from GitHub</button><button className="nav" onClick={openRepositoryPicker}><Settings2 size={16}/> Change repository</button><button className="nav" onClick={signOutGithub}><Github size={16}/> Sign out</button></>}
+          <a className="nav follow-link" href="https://github.com/AGSilicon" target="_blank" rel="noreferrer"><Github size={16}/> Follow @AGSilicon</a>
+          <button className="nav"><Settings2 size={16}/> Preferences</button>
+        </div>
       </aside>
       <main className="main">
         <div className="projectbar"><div><div className="eyebrow">CIRCUIT WORKSPACE</div><input className="project-name" value={project.name} onChange={e=>setProject({...project,name:e.target.value})}/><div className="subline">{circuit.name} <span>·</span> {circuit.components.length} components <span>·</span> {circuit.wires.length} wires {circuitStack.length>0&&<button className="back-link" onClick={returnToParent}>← Back to parent circuit</button>}</div></div>
@@ -314,6 +428,24 @@ export default function App() {
         </div>
       </main>
     </div>
+    {githubDialog && <div className="dialog-scrim" onMouseDown={event=>{if(event.target===event.currentTarget)setGithubDialog(null)}}>
+      <section className="github-dialog" role="dialog" aria-modal="true" aria-labelledby="github-dialog-title">
+        <div className="dialog-heading"><div><div className="eyebrow">GITHUB STORAGE</div><h2 id="github-dialog-title">{githubDialog==='repositories'?'Choose a private repository':'Your saved projects'}</h2></div><button className="icon-btn" onClick={()=>setGithubDialog(null)} aria-label="Close">×</button></div>
+        {githubError && <p className="github-error" role="alert">{githubError}</p>}
+        {githubBusy && <p className="github-help">Loading from GitHub…</p>}
+        {githubDialog==='repositories' && <>
+          <p className="github-help">LogicLab can access only private repositories where you installed its GitHub App. Choose one owned by your signed-in account.</p>
+          {githubRepositories.map(repository=><button className="github-choice" key={repository.id} disabled={githubBusy} onClick={()=>chooseRepository(repository)}><span><b>{repository.fullName}</b><small>Private repository · {repository.defaultBranch}</small></span><span>Connect</span></button>)}
+          {!githubBusy && githubRepositories.length===0 && <div className="github-empty"><b>No private repositories available</b><span>Create a private repository, then install the LogicLab GitHub App and grant it access to that repository only.</span>{githubState.appInstallUrl && <a className="secondary-btn" href={githubState.appInstallUrl} target="_blank" rel="noreferrer">Install / configure GitHub App</a>}</div>}
+          {githubState.user && <button className="text-button dialog-signout" onClick={signOutGithub} disabled={githubBusy}>Sign out of @{githubState.user.login}</button>}
+        </>}
+        {githubDialog==='projects' && <>
+          <p className="github-help">Projects are stored as JSON files in your connected private repository. Saves appear in that repository’s commit history.</p>
+          {githubProjects.map(remoteProject=><button className="github-choice" key={remoteProject.id} onClick={()=>loadGithubProject(remoteProject)}><span><b>{remoteProject.name}</b><small>Updated {new Date(remoteProject.updatedAt).toLocaleString()}</small></span><span>Open</span></button>)}
+          {!githubBusy && githubProjects.length===0 && <div className="github-empty"><b>No saved LogicLab projects yet</b><span>Use Save in the top bar to save this project to GitHub.</span></div>}
+        </>}
+      </section>
+    </div>}
   </div>
 }
 function snap(v:number){return Math.round(v/20)*20}

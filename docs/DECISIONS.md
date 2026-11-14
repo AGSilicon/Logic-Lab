@@ -28,7 +28,7 @@ Use `0`, `1`, and `X`. Unknown/floating signals must be visible to learners and 
 ## ADR-006: Student-owned storage
 **Status:** Accepted
 
-Local storage and JSON export/import are always available. GitHub sync is optional and should use student-owned private repositories with narrowly scoped authorization. Never store OAuth secrets in frontend code.
+Local storage and JSON export/import are always available. Optional GitHub App sign-in stores project JSON in a private repository the student selected and installed the app on. Saves are explicit; the Worker keeps the OAuth token in an encrypted HttpOnly cookie and the browser never receives it. Never store OAuth secrets in frontend code. Following the project owner is an optional user action, never a login requirement.
 
 ## ADR-007: Free/open-source core
 **Status:** Accepted

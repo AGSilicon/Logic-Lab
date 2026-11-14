@@ -8,9 +8,10 @@ A free, open-source, browser-based digital logic laboratory. LogicLab is designe
 - macOS-inspired light/dark workspace
 - Component palette: input, output, NAND, AND, OR, NOT, NOR, XOR, XNOR, clock
 - Circuit data model and JSON-compatible project structure
-- Basic combinational logic evaluator
-- Local project save
-- Initial component inspector and connection workflow
+- Combinational and sequential logic simulation
+- Interactive SVG editor with hierarchy, undo/redo, and truth tables
+- Local autosave and project JSON import/export
+- Optional GitHub App sign-in and private repository saves (requires deployment setup)
 
 ## Run locally
 
@@ -30,6 +31,10 @@ npm run build
 npm run preview
 ```
 
+## Publish with Cloudflare Pages
+
+Connect this repository to a Cloudflare Pages project. Use `npm run build` as the build command and `dist` as the output directory. Pages Functions under `functions/` provide the same-origin GitHub API. See [GitHub storage setup](docs/GITHUB-STORAGE.md) before enabling sign-in.
+
 ## Architecture
 
 - `src/engine`: framework-independent circuit types, gate evaluation and simulation
@@ -43,11 +48,11 @@ npm run preview
 3. Hierarchical subcircuits with interface pins, recursive simulation and reusable component library.
 4. Clock engine: manual/automatic stepping, rising/falling edge events, high/low level-sensitive latches.
 5. Truth tables, timing traces and project import/export.
-6. GitHub authentication and student-owned private repository storage.
+6. Configure the GitHub App and Cloudflare secrets for student-owned private repository storage.
 
 ## Storage and security
 
-This starter saves projects locally in the browser. GitHub sign-in and cloud sync are **not implemented yet**. Do not put GitHub OAuth secrets or access tokens in frontend code. The planned integration uses a GitHub App and a server-side token exchange through a free-tier worker, with narrowly scoped repository permissions.
+Projects always autosave in the browser and can be exported or imported as JSON. Optional GitHub saves use a GitHub App and server-side OAuth exchange. Students choose a private repository where the app is installed; GitHub tokens remain encrypted in an HttpOnly cookie and are never exposed to frontend JavaScript. The cloud feature remains unavailable until the GitHub App and Cloudflare environment variables are configured. Never put GitHub secrets in frontend code.
 
 ## License
 
