@@ -12,11 +12,11 @@ Students must create a private repository and install the LogicLab GitHub App wi
 
 Create a GitHub App owned by `AGSilicon`, with these settings:
 
+- Make the app **public** so students on other GitHub accounts can install it.
 - Homepage URL: the production Cloudflare Pages origin, such as `https://logiclab.pages.dev`.
-- Callback URL: `<production-pages-origin>/api/auth/callback`.
+- User authorization callback URL: `<production-pages-origin>/api/auth/callback`.
 - Repository permissions: **Contents: Read and write**, **Metadata: Read-only**.
 - Installation target: student personal accounts; students select only their private LogicLab repository.
-- User authorization callback URL: the same `<production-pages-origin>/api/auth/callback`.
 
 Do not request organization administration, repository administration, or unrelated account permissions. Students create their private repository themselves, then install the app on that repository.
 
