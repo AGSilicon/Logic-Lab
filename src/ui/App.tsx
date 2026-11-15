@@ -14,7 +14,7 @@ const groups: { title: string; kinds: GateKind[] }[] = [
   { title: 'TIMING', kinds: ['CLOCK'] }
 ]
 const titleFor = (kind: GateKind) => ({ INPUT:'Input pin', OUTPUT:'Output pin', CLOCK:'Clock', DFF:'D flip-flop', LATCH:'D latch' } as Record<string,string>)[kind] ?? `${kind} gate`
-const W = 112, H = 72
+const W = 72, H = 64
 type View = { x: number; y: number; w: number; h: number }
 type History = { circuits: Project['circuits']; inputValues: Project['inputValues']; sequentialState: Project['sequentialState'] }
 
@@ -48,6 +48,20 @@ export default function App() {
   const circuit = project.circuits.find(c => c.id === project.activeCircuitId)!
   const simulation = useMemo(() => simulateProject(project), [project])
   const selectedComponent = circuit.components.find(c => c.id === selected)
+
+  // On compact screens keep the canvas clear; panels open as temporary drawers.
+  useEffect(() => {
+    const compact = window.matchMedia('(max-width: 760px)')
+    const applyLayout = () => {
+      if (compact.matches) {
+        setShowLibrary(false)
+        setShowInspector(false)
+      }
+    }
+    applyLayout()
+    compact.addEventListener?.('change', applyLayout)
+    return () => compact.removeEventListener?.('change', applyLayout)
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -232,6 +246,7 @@ export default function App() {
   }
   function importProject(file?: File) {
     if (!file) return
+    if (file.size > 2_000_000) { alert('Project file is too large. Maximum supported size is 2 MB.'); return }
     const reader = new FileReader()
     reader.onload = () => { try {
       const p = JSON.parse(String(reader.result)) as Project
@@ -268,6 +283,10 @@ export default function App() {
     }
     if (e.target === e.currentTarget || (e.target as Element).classList.contains('canvas-background')) {
       setSelected(null); setWireStart(null)
+      if (e.pointerType === 'touch') {
+        panRef.current = { x: e.clientX, y: e.clientY, view }
+        e.currentTarget.setPointerCapture(e.pointerId)
+      }
     }
   }
   function onCanvasPointerMove(e: ReactPointerEvent<SVGSVGElement>) {
@@ -388,26 +407,39 @@ export default function App() {
             <div className="panel-note">Click a component to add it. Drag components on the canvas. Click an output port, then an input port to wire them.</div>
           </aside>}
           <section className="canvas-wrap">
-            <div className="canvas-top"><span><span className="live-dot"/> LIVE SIMULATION</span><span>INFINITE GRID · ORTHOGONAL WIRES</span></div>
+            <div className="canvas-top"><span><span className="live-dot"/> LIVE SIMULATION</span><span>SNAP GRID · LIVE SIGNALS</span></div>
             <svg ref={svgRef} className="canvas" viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`} onPointerDown={onCanvasPointerDown} onPointerMove={onCanvasPointerMove} onPointerUp={onCanvasPointerUp} onPointerCancel={onCanvasPointerUp} onWheel={zoomAt} onContextMenu={e=>e.preventDefault()}>
               <defs><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="translate(0 0)"><circle cx="1" cy="1" r=".9" className="grid-dot"/></pattern><pattern id="majorGrid" width="100" height="100" patternUnits="userSpaceOnUse"><path d="M100 0H0V100" className="major-grid-line" fill="none"/></pattern></defs>
               <rect x={view.x-5000} y={view.y-5000} width={view.w+10000} height={view.h+10000} fill="url(#grid)" className="canvas-background"/>
               <rect x={view.x-5000} y={view.y-5000} width={view.w+10000} height={view.h+10000} fill="url(#majorGrid)" className="canvas-background"/>
               {circuit.wires.map(w=>{const a=circuit.components.find(c=>c.id===w.from.componentId),b=circuit.components.find(c=>c.id===w.to.componentId);if(!a||!b)return null;const inputIndex=b.inputs.findIndex(p=>p.id===w.to.portId), outputIndex=a.outputs.findIndex(p=>p.id===w.from.portId);const x1=a.x+W,y1=a.y+H/2+(outputIndex-(a.outputs.length-1)/2)*13,x2=b.x,y2=b.y+H/2+(inputIndex-(b.inputs.length-1)/2)*13,m=Math.round((x1+x2)/2/20)*20;const val=simulation.values[`${a.id}:${w.from.portId}`];return <g key={w.id}><path d={`M${x1} ${y1} H${m} V${y2} H${x2}`} className={`wire ${val===1?'wire-high':val===0?'wire-low':''}`} onClick={e=>{e.stopPropagation();updateCircuit((cs,ws)=>({components:cs,wires:ws.filter(x=>x.id!==w.id)}))}}/><circle cx={m} cy={y1} r="2.7" className="junction"/></g>})}
               {circuit.components.map(c=><g key={c.id} transform={`translate(${c.x},${c.y})`} onPointerDown={e=>startDrag(e,c)} onClick={e=>{e.stopPropagation();setSelected(c.id)}} onDoubleClick={e=>{e.stopPropagation();if(c.kind==='CUSTOM'&&c.customCircuitId)openCustom(c.customCircuitId)}} className="node">
-                <rect width={W} height={H} rx="11" className={selected===c.id?'node-body selected':'node-body'}/>
-                <text x={W/2} y="27" textAnchor="middle" className="node-type">{c.kind}</text><text x={W/2} y="45" textAnchor="middle" className="node-label">{c.label}</text>
-                {c.inputs.map((p,i)=><g key={p.id} onPointerDown={e=>e.stopPropagation()} onClick={e=>clickPort(e,c,p.id,'input')} className="port-hit"><circle cx="0" cy={H/2+i*13-(c.inputs.length-1)*6.5} r="10" className="port-hit-area"/><circle cx="0" cy={H/2+i*13-(c.inputs.length-1)*6.5} r="4.5" className="port input-port"/></g>)}
-                {c.outputs.map((p,i)=><g key={p.id} onPointerDown={e=>e.stopPropagation()} onClick={e=>clickPort(e,c,p.id,'output')} className="port-hit"><circle cx={W} cy={H/2+i*13-(c.outputs.length-1)*6.5} r="10" className="port-hit-area"/><circle cx={W} cy={H/2+i*13-(c.outputs.length-1)*6.5} r="4.5" className="port output-port"/></g>)}
-                {c.kind==='INPUT'&&<text x={W/2} y="62" textAnchor="middle" className="node-value">{project.inputValues[c.id]??0}</text>}
-                {c.kind==='OUTPUT'&&<text x={W/2} y="62" textAnchor="middle" className="node-value">{simulation.outputs[c.id]??'X'}</text>}
-                {c.kind==='DFF'&&<text x={W/2} y="62" textAnchor="middle" className="node-value">Q={project.sequentialState[c.id]??0}</text>}
-                {c.kind==='LATCH'&&<text x={W/2} y="62" textAnchor="middle" className="node-value">Q={project.sequentialState[c.id]??0}</text>}
+                {['AND','NAND','OR','NOR','XOR','XNOR','NOT'].includes(c.kind) ? <>
+                  <g className={`gate-symbol gate-${c.kind.toLowerCase()} ${selected===c.id ? "selected" : ""}`}>
+                    {c.kind==='AND'||c.kind==='NAND' ? <path d="M16 9 H34 A23 23 0 0 1 34 55 H16 Z" className="gate-shape"/> :
+                     c.kind==='OR'||c.kind==='NOR' ? <path d="M14 9 Q31 32 14 55 Q39 55 57 32 Q39 9 14 9 Z" className="gate-shape"/> :
+                     c.kind==='XOR'||c.kind==='XNOR' ? <><path d="M14 9 Q31 32 14 55 Q39 55 57 32 Q39 9 14 9 Z" className="gate-shape"/><path d="M7 9 Q24 32 7 55" className="gate-extra"/></> :
+                     <path d="M16 9 L51 32 L16 55 Z" className="gate-shape"/>}
+                    {(c.kind==='NAND'||c.kind==='NOR'||c.kind==='XNOR'||c.kind==='NOT')&&<circle cx="61" cy="32" r="4.5" className="gate-bubble"/>}
+                    <text x="35" y="35" textAnchor="middle" className="gate-label">{c.kind}</text>
+                  </g>
+                  <text x={W/2} y="63" textAnchor="middle" className="node-label">{c.label}</text>
+                </> : <>
+                  <rect x="12" y="9" width="48" height="46" rx="9" className={selected===c.id?'node-body selected':'node-body'}/>
+                  <text x={W/2} y="27" textAnchor="middle" className="node-type">{c.kind}</text>
+                  <text x={W/2} y="43" textAnchor="middle" className="node-label">{c.label}</text>
+                  {c.kind==='INPUT'&&<text x={W/2} y="53" textAnchor="middle" className="node-value">{project.inputValues[c.id]??0}</text>}
+                  {c.kind==='OUTPUT'&&<text x={W/2} y="53" textAnchor="middle" className="node-value">{simulation.outputs[c.id]??'X'}</text>}
+                  {c.kind==='DFF'&&<text x={W/2} y="53" textAnchor="middle" className="node-value">Q={project.sequentialState[c.id]??0}</text>}
+                  {c.kind==='LATCH'&&<text x={W/2} y="53" textAnchor="middle" className="node-value">Q={project.sequentialState[c.id]??0}</text>}
+                </>}
+                {c.inputs.map((p,i)=><g key={p.id} onPointerDown={e=>e.stopPropagation()} onClick={e=>clickPort(e,c,p.id,'input')} className="port-hit"><circle cx="0" cy={H/2+i*13-(c.inputs.length-1)*6.5} r="12" className="port-hit-area"/><circle cx="0" cy={H/2+i*13-(c.inputs.length-1)*6.5} r="4.5" className="port input-port"/></g>)}
+                {c.outputs.map((p,i)=><g key={p.id} onPointerDown={e=>e.stopPropagation()} onClick={e=>clickPort(e,c,p.id,'output')} className="port-hit"><circle cx={W} cy={H/2+i*13-(c.outputs.length-1)*6.5} r="12" className="port-hit-area"/><circle cx={W} cy={H/2+i*13-(c.outputs.length-1)*6.5} r="4.5" className="port output-port"/></g>)}
               </g>)}
               {wireStart&&<text x={view.x+view.w/2} y={view.y+view.h-35} textAnchor="middle" className="wire-instruction">Select an input port to complete the connection · Esc to cancel</text>}
               {circuit.components.length===0&&<text x={view.x+view.w/2} y={view.y+view.h/2} textAnchor="middle" className="empty-text">Your canvas is ready. Add a component from the left panel.</text>}
             </svg>
-            <div className="canvas-hint">{wireStart?'Choose a destination input port · Esc cancels':'Drag to move · Scroll to zoom · Middle/right-drag to pan · Click a wire to remove it'}</div>
+            <div className="canvas-hint">{wireStart?'Choose a destination input port · Esc cancels':'Drag to move · Pinch/zoom controls · Drag empty canvas to pan · Tap a wire to remove it'}</div>
           </section>
           {showInspector&&<aside className="inspector">
             <div className="panel-heading">Inspector</div>

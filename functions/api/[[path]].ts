@@ -212,13 +212,49 @@ async function saveProject(request: Request, session: Session, id: string) {
 
 function isValidProject(value: unknown): value is { id: string; name: string; schemaVersion: number; [key: string]: unknown } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  const project = value as Record<string, unknown>
-  if (project.schemaVersion !== 1 || typeof project.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(project.id)) return false
-  if (typeof project.name !== 'string' || typeof project.activeCircuitId !== 'string') return false
-  if (!Array.isArray(project.circuits) || project.circuits.length > 100) return false
-  if (!project.circuits.some(circuit => circuit && typeof circuit === 'object' && (circuit as { id?: unknown }).id === project.activeCircuitId)) return false
-  if (!project.inputValues || typeof project.inputValues !== 'object' || !project.sequentialState || typeof project.sequentialState !== 'object') return false
-  return project.clockLevel === 0 || project.clockLevel === 1
+  const project = value as Record<string, any>
+  const idPattern = /^[a-zA-Z0-9_-]{1,100}$/
+  if (project.schemaVersion !== 1 || typeof project.id !== 'string' || !idPattern.test(project.id)) return false
+  if (typeof project.name !== 'string' || project.name.length > 100
+    || typeof project.activeCircuitId !== 'string' || !idPattern.test(project.activeCircuitId)) return false
+  if (!Array.isArray(project.circuits) || project.circuits.length < 1 || project.circuits.length > 100) return false
+  if (!project.circuits.some((circuit: any) => circuit && circuit.id === project.activeCircuitId)) return false
+  if (!project.inputValues || typeof project.inputValues !== 'object' || Array.isArray(project.inputValues)
+    || !project.sequentialState || typeof project.sequentialState !== 'object' || Array.isArray(project.sequentialState)) return false
+  if (project.clockLevel !== 0 && project.clockLevel !== 1) return false
+
+  for (const circuit of project.circuits) {
+    if (!circuit || typeof circuit.id !== 'string' || !idPattern.test(circuit.id)
+      || typeof circuit.name !== 'string' || circuit.name.length > 100
+      || !Array.isArray(circuit.components) || circuit.components.length > 500
+      || !Array.isArray(circuit.wires) || circuit.wires.length > 1500) return false
+    const componentIds = new Set<string>()
+    for (const component of circuit.components) {
+      if (!component || typeof component.id !== 'string' || !idPattern.test(component.id)
+        || componentIds.has(component.id) || typeof component.kind !== 'string'
+        || component.kind.length > 20 || typeof component.label !== 'string'
+        || component.label.length > 80 || !Number.isFinite(component.x)
+        || !Number.isFinite(component.y) || Math.abs(component.x) > 1_000_000
+        || Math.abs(component.y) > 1_000_000
+        || !Array.isArray(component.inputs) || component.inputs.length > 16
+        || !Array.isArray(component.outputs) || component.outputs.length > 16) return false
+      componentIds.add(component.id)
+      for (const port of [...component.inputs, ...component.outputs]) {
+        if (!port || typeof port.id !== 'string' || port.id.length > 40
+          || typeof port.name !== 'string' || port.name.length > 40
+          || !['input', 'output'].includes(port.direction)
+          || !Number.isInteger(port.bitWidth) || port.bitWidth < 1 || port.bitWidth > 32) return false
+      }
+    }
+    for (const wire of circuit.wires) {
+      if (!wire || typeof wire.id !== 'string' || !idPattern.test(wire.id)) return false
+      const from = circuit.components.find((component: any) => component.id === wire.from?.componentId)
+      const to = circuit.components.find((component: any) => component.id === wire.to?.componentId)
+      if (!from?.outputs.some((port: any) => port.id === wire.from.portId)
+        || !to?.inputs.some((port: any) => port.id === wire.to.portId)) return false
+    }
+  }
+  return true
 }
 
 async function readSession(request: Request, env: Env): Promise<Session | null> {

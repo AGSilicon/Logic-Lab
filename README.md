@@ -57,3 +57,14 @@ Projects always autosave in the browser and can be exported or imported as JSON.
 ## License
 
 MIT. See `LICENSE`.
+
+
+## Responsive workspace and security notes
+
+- The editor uses a compact mobile layout: the circuit canvas remains the primary surface, while the component library and inspector open as drawers.
+- Gate symbols are rendered as original LogicLab SVG shapes with larger touch hit areas for wiring.
+- Touch users can drag components and pan by dragging the empty canvas; zoom controls remain available in the toolbar.
+- Imported project files are limited to 2 MB and validated for component, port, wire, and coordinate bounds before loading.
+- Cloudflare Pages can apply the security headers in `public/_headers`. Other static hosts may require equivalent header configuration in their own dashboard.
+- The GitHub OAuth session is stored in an encrypted, `HttpOnly`, `Secure`, `SameSite=Lax` cookie. Keep the GitHub App client secret and session encryption key only in server-side environment variables.
+- Local browser storage is device-specific. GitHub project sync is optional and stores project JSON in the user's connected private repository; it is not a shared central cloud database.
